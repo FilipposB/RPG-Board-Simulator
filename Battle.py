@@ -1,12 +1,14 @@
 import pygame
+import pygame.camera
 import random
 import sys
+import os
 
 from multiprocessing import Process
-
+import threading
 from pygame.locals import (
     KEYDOWN, K_ESCAPE, QUIT,
-    DOUBLEBUF, FULLSCREEN, MOUSEBUTTONDOWN)
+    DOUBLEBUF, FULLSCREEN, MOUSEBUTTONDOWN, KEYUP)
 
 
 class PaintMove:
@@ -15,6 +17,7 @@ class PaintMove:
 
     def add_spot(self, x, y, color):
         self.paint.append((x, y, color))
+
 
 class Icon(pygame.sprite.Sprite):
     def __init__(self, x, y, width, height):
@@ -40,19 +43,97 @@ class ImageIcon(Icon):
         Icon.__init__(self, x, y, width, height)
         self.surf = pygame.transform.scale(img, (width, height))
         self.name = name
-        nameSur = font.render(str(name + " " +number), True, icon_text_color)
+        nameSur = font.render(str(name), True, icon_text_color)
         nameRect = nameSur.get_rect()
         name_surf = pygame.Surface((nameRect.width, nameRect.height))
         name_surf.fill((0, 0, 0))
         self.surf.blit(name_surf, nameRect.move(0, height - 20))
         self.surf.blit(nameSur, nameRect.move(0, height - 20))
+        if number != "":
+            nameSur = font.render(str(number), True, icon_text_color)
+            nameRect = nameSur.get_rect()
+            name_surf = pygame.Surface((nameRect.width, nameRect.height))
+            name_surf.fill((0, 0, 0))
+            self.surf.blit(name_surf, nameRect.move(0, 0))
+            self.surf.blit(nameSur, nameRect.move(0, 0))
 
 
 class Panel(pygame.sprite.Sprite):
     def __init__(self, x, y, width, height, img):
         pygame.sprite.Sprite.__init__(self)
-        self.surf = pygame.transform.scale(pygame.image.load("Assets/" + img), (width, height))
+        self.surf = pygame.transform.scale(
+            pygame.image.load("Assets/" + img), (width, height))
         self.rect = pygame.Rect(x, y, width, height)
+
+
+# This thread captures the camera as long as webcam is active
+class WebcamCapture(threading.Thread):
+    def __init__(self):
+        threading.Thread.__init__(self)
+        cameras = pygame.camera.list_cameras()
+        self.camera_size = (256, 256)
+        self.webcam_is_visible = False
+        self.working = False
+        self.webcam = pygame.camera.Camera(cameras[0], self.camera_size)
+        self.webcam_image = pygame.Surface(self.camera_size)
+        self.camera_pos = (0, 0)
+        self.camera_is_movable = False
+        self.camera_available = False
+        self.running = False
+        self.turning_camera = False
+        # moves the overlay bottom right
+        self.move_camera((100000, 100000))
+
+    def run(self):
+        self.running = True
+        while self.running:
+            if self.webcam_is_visible and self.camera_available and not self.turning_camera:
+                # print("d")
+                self.working = True
+                try:
+                    if self.camera_available:
+                        self.webcam_image = self.webcam.get_image()
+                        pygame.draw.rect(self.webcam_image, (0, 0, 0), [
+                                        0, 0, self.camera_size[0], self.camera_size[1]-17], 2)
+                except:
+                    print("error")
+                    pass
+                self.working = False
+
+            self.working = False
+
+    def turn_camera(self):
+        self.webcam_is_visible = (not self.webcam_is_visible)
+        self.turning_camera = True
+        if self.webcam_is_visible:
+            cameras = pygame.camera.list_cameras()
+            try:
+                self.webcam = pygame.camera.Camera(
+                    cameras[0], self.camera_size)
+                self.webcam.start()
+                self.camera_available = True
+            except:
+                self.webcam_is_visible = False
+                self.camera_available = False
+        else:
+            try:
+                self.camera_available = False
+                self.webcam.stop()
+                self.turning_camera = False
+            except:
+                pass
+        self.turning_camera = False
+
+    def move_camera(self, new_pos):
+        x = new_pos[0]
+        y = new_pos[1]
+        if (new_pos[0] + self.camera_size[0] > pygame.display.get_surface().get_size()[0]):
+            x = pygame.display.get_surface().get_size()[
+                0] - self.camera_size[0]
+        if (new_pos[1] + self.camera_size[1] > pygame.display.get_surface().get_size()[1]):
+            y = pygame.display.get_surface().get_size()[
+                1] - self.camera_size[1]
+        self.camera_pos = (x, y)
 
 
 class AddPanel(Panel):
@@ -69,10 +150,12 @@ class AddPanel(Panel):
         self.button_up = pygame.rect.Rect(1260, 441, 100, 100)
         self.button_down = pygame.rect.Rect(1260, 586, 100, 100)
         rectan = pygame.rect.Rect(x+25, y+122, 644, 115)
-        self.button_tokens = (rectan, rectan.move(0, 115), rectan.move(0, 230), rectan.move(0, 345))
+        self.button_tokens = (rectan, rectan.move(
+            0, 115), rectan.move(0, 230), rectan.move(0, 345))
 
     def sort_names(self, monster_names):
         word = self.word
+
         def word_similarity(test):
             return test[0].lower() .find(word.lower())
         id = 0
@@ -91,12 +174,13 @@ class AddPanel(Panel):
                     to_remove.append(id)
 
                 id += 1
-            for i in range (len(to_remove)-1, -1, -1):
+            for i in range(len(to_remove)-1, -1, -1):
                 self.sorted_names.pop(to_remove[i])
                 self.sorted_ids.pop(to_remove[i])
 
-        if len(self.sorted_names)  > 0 and len(self.word) > 0:
-            self.sorted_names, self.sorted_ids = (list(t) for t in zip(*sorted(zip(self.sorted_names, self.sorted_ids), key = word_similarity)))
+        if len(self.sorted_names) > 0 and len(self.word) > 0:
+            self.sorted_names, self.sorted_ids = (list(t) for t in zip(
+                *sorted(zip(self.sorted_names, self.sorted_ids), key=word_similarity)))
         self.pre_word = self.word
 
     def update_text(self):
@@ -105,9 +189,11 @@ class AddPanel(Panel):
         name = font_search.render(str(self.word), True, (0, 0, 0))
         nameRect = name.get_rect()
         nameRect.move_ip(30, 76)
-        pygame.draw.rect(self.surf, (255, 255, 255), (nameRect.x, nameRect.y, 635, 27))
+        pygame.draw.rect(self.surf, (255, 255, 255),
+                         (nameRect.x, nameRect.y, 635, 27))
         self.surf.blit(name, nameRect)
-        pygame.draw.rect(self.surf, (0, 0, 0), (nameRect.right + 3, nameRect.y, 3, nameRect.height - 3))
+        pygame.draw.rect(self.surf, (0, 0, 0), (nameRect.right +
+                                                3, nameRect.y, 3, nameRect.height - 3))
         self.update_images()
 
     def update_images(self):
@@ -120,9 +206,11 @@ class AddPanel(Panel):
                 break
             j = i - self.top
             self.surf.blit(pygame.transform.scale(monster_icons[self.sorted_ids[i]], (size, size)),
-                           rect.move(0, j  * (size + 5) + 2))
-            name = font_search.render(str(self.sorted_names[i]), True, icon_text_color)
-            self.surf.blit(name, rect.move(size + 20, j * (size + 5) + size / 3 + 2))
+                           rect.move(0, j * (size + 5) + 2))
+            name = font_search.render(
+                str(self.sorted_names[i]), True, icon_text_color)
+            self.surf.blit(name, rect.move(
+                size + 20, j * (size + 5) + size / 3 + 2))
 
         for i in range(0, 5):
             pygame.draw.line(self.surf, (0, 0, 0), (rect.x, rect.y + i * (size + 5)),
@@ -139,7 +227,8 @@ class AddPanel(Panel):
                     if i + self.top >= len(self.sorted_names):
                         break
                     index = i + self.top
-                    add_token(self.sorted_names[index], self.sorted_ids[index], quantity)
+                    add_token(self.sorted_names[index],
+                              self.sorted_ids[index], quantity)
             return
         self.update_images()
 
@@ -160,7 +249,8 @@ def load_player_data(file_name, names, pc_images):
             if line[-1] == '\n':
                 line = line[:-1]
             names.append(line.split('.')[0])
-            pc_images.append(pygame.image.load("Campaigns/"+file_name+"/Player_Icons/" + line))
+            pc_images.append(pygame.image.load(
+                "Campaigns/"+file_name+"/Player_Icons/" + line))
         return True
     except OSError:
         print("File doesn't exist !")
@@ -173,12 +263,11 @@ def load_monster_data(names, icons):
     loaded_files = 0
     for line in file:
         loaded_files += 1
-        print(loaded_files," / ",total_monsters , end="\r")
+        print(loaded_files, " / ", total_monsters, end="\r")
         if line[-1] == '\n':
             line = line[:-1]
         names.append(line.split('.')[0])
         icons.append(pygame.image.load("Monster_Database/" + line))
-        
 
 
 def produce_empty_greed(width, height, grid_len):
@@ -218,7 +307,8 @@ def add_token(monster_names, id, count):
     monster_size = GRID_SIZE
     for i in range(1, count+1):
         pc.add(ImageIcon(int(grid_x / monster_size + 1) * monster_size,
-                         int((monster_size + grid_y) / monster_size) * monster_size, monster_size,
+                         int((monster_size + grid_y) / monster_size) *
+                         monster_size, monster_size,
                          monster_size,
                          monster_names,  str(monster_counter[id]), monster_icons[id]))
         monster_counter[id] += 1
@@ -242,7 +332,7 @@ while not success:
     player_icons = list()
     player_names = list()
     # campaign_name = input("Choose campaign : ")
-    
+
     campaign_name = sys.argv[1]
     success = load_player_data(campaign_name, player_names, player_icons)
 
@@ -254,10 +344,20 @@ monster_counter_alive = [0] * len(monster_names)
 monster_counter = [1] * len(monster_names)
 
 # Init Screen
-flags = FULLSCREEN | DOUBLEBUF
+if sys.argv[4] == "fullscreen":
+    flags = pygame.NOFRAME | DOUBLEBUF
+else:
+    flags = DOUBLEBUF
+
+os.environ['SDL_VIDEO_WINDOW_POS'] = "0,0"
+info = pygame.display.Info()
+# and create a borderless window that's as big as the entire screen
+screen = pygame.display.set_mode((info.current_w, info.current_h), flags)
+
 screen = pygame.display.set_mode((0, 0), flags)
 image_ico = pygame.image.load("Assets/DnD Logo.png")
 pygame.display.set_icon(image_ico)
+
 
 # Final variables
 SCREEN_WIDTH, SCREEN_HEIGHT = pygame.display.get_surface().get_size()
@@ -272,7 +372,8 @@ grid_height = SCREEN_HEIGHT * 5
 grid_x = grid_width / 2
 grid_y = grid_height / 2
 grid = produce_empty_greed(grid_width, grid_height, GRID_SIZE)
-grid_values = [[0] * int(grid_width / GRID_SIZE + 0.5)] * int(grid_height / GRID_SIZE + 0.5)
+grid_values = [[0] * int(grid_width / GRID_SIZE + 0.5)] * \
+    int(grid_height / GRID_SIZE + 0.5)
 
 # Drawing Canvas
 canvas = pygame.Surface((grid_width, grid_height))
@@ -305,12 +406,20 @@ add_panel = AddPanel(SCREEN_WIDTH / 2 - add_panel_width / 2, SCREEN_HEIGHT / 2 -
                      add_panel_height, "Add Panel.png")
 add_panel.sort_names(monster_names)
 
+# Add camera to panel
+pygame.camera.init()
+capture_camera_thread = WebcamCapture()
+capture_camera_thread.start()
+
 # Undo Redo
 paint_history = list()
 while running:
     grid_cooldown_timer += 1
     new_pos = pygame.mouse.get_pos()
     adjust_pos = (new_pos[0] + grid_x, new_pos[1] + grid_y)
+
+    if capture_camera_thread.camera_is_movable:
+        capture_camera_thread.move_camera(new_pos)
 
     # For loop through the event queue
     for event in pygame.event.get():
@@ -321,23 +430,27 @@ while running:
             if event.key == pygame.K_DELETE:
                 new_grid_col = (0, 0, 0)
                 if not random_grid_color:
-                    new_grid_col = (random.randrange(100, 255), random.randrange(100, 255), random.randrange(100, 255))
+                    new_grid_col = (random.randrange(100, 255), random.randrange(
+                        100, 255), random.randrange(100, 255))
                 pygame.transform.threshold(grid.subsurface(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT - 100),
-                                           grid.subsurface(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT - 100), new_grid_col,
+                                           grid.subsurface(
+                                               0, 0, SCREEN_WIDTH, SCREEN_HEIGHT - 100), new_grid_col,
                                            (10, 10, 1), grid_color,
                                            1, None, True)
                 grid_color = new_grid_col
                 grid = produce_empty_greed(grid_width, grid_height, GRID_SIZE)
                 random_grid_color = not random_grid_color
-            if event.key == K_ESCAPE:
+            elif event.key == K_ESCAPE:
                 if not add_panel_active:
+                    capture_camera_thread.running = False
                     running = False
+                    exit(0)
                 else:
                     add_panel_active = False
                     quantity = 1
                     add_panel.update_text()
                     # close panel
-            if add_panel_active:
+            elif add_panel_active:
                 if event.key == pygame.K_RETURN:
                     add_panel.word = ""
                     quantity = 1
@@ -351,23 +464,23 @@ while running:
                     if quantity < 10:
                         quantity += 1
                         add_panel.update_quantity()
-                elif ('Z' >= event.unicode >= 'A' or 'z' >= event.unicode >= 'a' or event.unicode == ' ' or event.unicode == '-'   or '9' >= event.unicode >=  '0') and len(
+                elif ('Z' >= event.unicode >= 'A' or 'z' >= event.unicode >= 'a' or event.unicode == ' ' or event.unicode == '-' or '9' >= event.unicode >= '0') and len(
                         add_panel.word) < 30:
                     add_panel.word += event.unicode
                 add_panel.update_text()
-            if event.key == pygame.K_z and not add_panel_active:
+            elif event.key == pygame.K_z and not add_panel_active:
                 print("d")
-            if event.key == pygame.K_a and not add_panel_active:
+            elif event.key == pygame.K_a and not add_panel_active:
                 add_panel_active = True
                 quantity = 1
                 add_panel.word = ""
                 add_panel.update_quantity()
                 add_panel.update_text()
-            if event.key == pygame.K_d and not add_panel_active:
+            elif event.key == pygame.K_d and not add_panel_active:
                 count = 0
                 for ic in pc:
                     if ic.rect.collidepoint(adjust_pos) and count > pc_count - 1:
-                        for i in range (0, len(monster_names)):
+                        for i in range(0, len(monster_names)):
                             if ic.name == monster_names[i]:
                                 monster_counter_alive[i] -= 1
                                 if monster_counter_alive[i] == 0:
@@ -376,12 +489,21 @@ while running:
                         pc.remove(ic)
                         break
                     count += 1
-            if event.key == pygame.K_c and not add_panel_active:
+            elif event.key == pygame.K_c and not add_panel_active:
                 canvas.fill(empty_board_color)
-            if event.key == pygame.K_l and not add_panel_active:
+            elif event.key == pygame.K_l and not add_panel_active:
                 pen_color = swap_pen_color()
+            elif event.key == pygame.K_i and not add_panel_active:
+                if pygame.key.get_mods() & pygame.KMOD_SHIFT:
+                    capture_camera_thread.camera_is_movable = True
+                else:
+                    capture_camera_thread.turn_camera()
+        elif event.type == KEYUP:
+            if event.key == pygame.K_i:
+                capture_camera_thread.camera_is_movable = False
         # Check for QUIT event. If QUIT, then set running to false.
         elif event.type == QUIT:
+            capture_camera_thread.running = False
             running = False
         elif event.type == pygame.MOUSEBUTTONDOWN:
             if event.button == 5:
@@ -412,8 +534,10 @@ while running:
                 count = 0
                 for ic in pc:
                     if count == focused_icon:
-                        ic.rect.x = int(ic.rect.centerx / GRID_SIZE) * GRID_SIZE
-                        ic.rect.y = int(ic.rect.centery / GRID_SIZE) * GRID_SIZE
+                        ic.rect.x = int(ic.rect.centerx /
+                                        GRID_SIZE) * GRID_SIZE
+                        ic.rect.y = int(ic.rect.centery /
+                                        GRID_SIZE) * GRID_SIZE
                         break
                     count += 1
             focused_icon = -1
@@ -440,7 +564,8 @@ while running:
                     break
                 count += 1
         if pressed[2]:
-            steps = max(abs(adjust_pos[0] - old_adjusted_pos[0]), abs(adjust_pos[1] - old_adjusted_pos[1]))
+            steps = max(abs(adjust_pos[0] - old_adjusted_pos[0]),
+                        abs(adjust_pos[1] - old_adjusted_pos[1]))
             if steps < 1:
                 steps = 1
             dx = (adjust_pos[0] - old_adjusted_pos[0]) / steps
@@ -451,7 +576,8 @@ while running:
             for _ in range(int(steps)):
                 xPos += dx
                 yPos += dy
-                new_move.add_spot(round(xPos - circle_size / 5),  round(yPos - circle_size / 5), pen_color==empty_board_color)
+                new_move.add_spot(round(xPos - circle_size / 5),
+                                  round(yPos - circle_size / 5), pen_color == empty_board_color)
                 pygame.draw.circle(canvas, pen_color, (round(xPos - circle_size / 5), round(yPos - circle_size / 5)),
                                    circle_size)
     old_pos = new_pos
@@ -481,6 +607,12 @@ while running:
 
     if add_panel_active:
         screen.blit(add_panel.surf, add_panel.rect)
+
+    # draw camera input
+    if capture_camera_thread.webcam_is_visible:
+        screen.blit(capture_camera_thread.webcam_image, capture_camera_thread.camera_pos,
+                    (0, 0, capture_camera_thread.camera_size[0], capture_camera_thread.camera_size[1]))
+        #webcam_image = webcam.get_image()
 
     # Update the display
     pygame.display.flip()
